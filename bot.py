@@ -5,7 +5,9 @@ from discord.ext import commands, tasks
 import aiohttp
 import xml.etree.ElementTree as ET
 
+# Fetch secrets securely from Railway environment variables
 TOKEN = os.getenv("DISCORD_TOKEN")
+DEFAULT_CHANNEL_ID = int(os.getenv("CHANNEL_ID", "1539528084619792504"))
 
 class WuWaBot(commands.Bot):
     def __init__(self):
@@ -13,22 +15,26 @@ class WuWaBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # Sync slash commands globally
         await self.tree.sync()
         print("Slash commands synced successfully.")
 
 bot = WuWaBot()
 
-# Memory tracking
-active_channels = set()        # Set of channel IDs where updates are allowed
-posted_announcements = set()   # Avoid duplicate posts
+active_channels = set()
+posted_announcements = set()
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name} (ID: {bot.user.id})")
+    
+    # Auto-add default channel if configured in Railway
+    if DEFAULT_CHANNEL_ID != 0:
+        active_channels.add(DEFAULT_CHANNEL_ID)
+        print(f"Default channel {DEFAULT_CHANNEL_ID} registered for updates.")
+        
     check_wuwa_updates.start()
 
-# --- COMMANDS ---
+# --- SLASH COMMANDS ---
 
 @bot.tree.command(name="start", description="Allow Wuthering Waves updates to auto-post in this channel.")
 @app_commands.checks.has_permissions(administrator=True)
@@ -58,20 +64,18 @@ async def show_codes(interaction: discord.Interaction):
         color=discord.Color.gold()
     )
     embed.add_field(name="📍 Permanent Codes", value="`WUTHERINGGIFT` (50x Astrites)\n`WUWA4PC` (50x Astrites - PC Platform)", inline=False)
-    embed.add_field(name="🚨 Livestream / Version Codes", value="Check this channel regularly! Codes released during broadcasts automatically post in BIG letters.", inline=False)
+    embed.add_field(name="🚨 Livestream / Version Codes", value="Check this channel regularly! New codes drop in BIG letters as soon as announced.", inline=False)
     embed.set_footer(text="Official Kuro Games Code Tracker")
     
     await interaction.response.send_message(embed=embed)
 
-# --- BACKGROUND AUTOMATION TASK ---
+# --- NEWS AUTOMATION ---
 
 @tasks.loop(minutes=10)
 async def check_wuwa_updates():
-    """Polls official RSS feeds for WuWa news and formats specific announcements."""
     if not active_channels:
         return
 
-    # Official WuWa News Feed Scraper/Aggregator
     url = "https://rsshub.app/wutheringwaves/news"
 
     async with aiohttp.ClientSession() as session:
@@ -81,7 +85,6 @@ async def check_wuwa_updates():
                     text = await resp.text()
                     root = ET.fromstring(text)
 
-                    # Reverse array to post older news first if multiple are missed
                     for item in reversed(root.findall("./channel/item")):
                         title_elem = item.find("title")
                         link_elem = item.find("link")
@@ -95,17 +98,17 @@ async def check_wuwa_updates():
                             posted_announcements.add(link)
                             lower_title = title.lower()
 
-                            # --- FILTER 1: REDEMPTION CODES ---
+                            # 1. Redemption Codes (BIG Text)
                             if any(k in lower_title for k in ["code", "redemption", "reward", "gift"]):
                                 message_text = (
                                     f"# 🚨 NEW REDEMPTION CODE DROPPED 🚨\n"
-                                    f"### ➡️ Check Official Link: {link}\n"
-                                    f"**Title:** {title}\n"
-                                    f"*Redeem quickly in-game before expiration!*"
+                                    f"### ➡️ Link: {link}\n"
+                                    f"**Announcement:** {title}\n"
+                                    f"*Redeem in-game quickly before expiration!*"
                                 )
-                                await broadcast_message(message_text, embed=None)
+                                await broadcast_message(content=message_text, embed=None)
 
-                            # --- FILTER 2: VERSION UPDATES & MAINTENANCE ---
+                            # 2. Version Updates & Banners
                             elif any(k in lower_title for k in ["version", "update", "patch", "preview"]):
                                 embed = discord.Embed(
                                     title=f"📢 OFFICIAL UPDATE: {title}",
@@ -113,22 +116,15 @@ async def check_wuwa_updates():
                                     color=discord.Color.purple()
                                 )
                                 embed.add_field(name="🌐 Official Website URL", value=link, inline=False)
-                                
-                                # Include yield details if present in website content
-                                if "astrite" in description.lower() or "pull" in description.lower():
-                                    embed.add_field(name="💎 Free Astrites & Pulls Yield", value="Check website details for exact Astrite totals.", inline=False)
-                                
-                                embed.add_field(name="⚔️ Resonators & Banners", value="Check link for official new character reveals and rerun banners.", inline=False)
-                                embed.add_field(name="⚙️ Optimizations & Bug Fixes", value="Includes graphic improvements, gameplay fixes, and engine updates.", inline=False)
-                                embed.set_footer(text="Official Wuthering Waves Announcement")
-
+                                embed.add_field(name="⚔️ Banners & Resonators", value="Official character reveals & rerun details in link.", inline=False)
+                                embed.add_field(name="⚙️ Bug Fixes & Graphics", value="Includes graphic improvements and game engine fixes.", inline=False)
                                 await broadcast_message(content=None, embed=embed)
 
-                            # --- FILTER 3: MAINTENANCE & COMPENSATIONS ---
+                            # 3. Maintenance & Compensation
                             elif any(k in lower_title for k in ["maintenance", "compensation", "bug"]):
                                 embed = discord.Embed(
-                                    title=f"🔧 MAINTENANCE & COMPENSATION",
-                                    description=f"**{title}**\n\nOfficial details, bug fixes, and Astrite compensations are published at:\n{link}",
+                                    title="🔧 MAINTENANCE & COMPENSATION",
+                                    description=f"**{title}**\n\nFull details & Astrite compensation:\n{link}",
                                     color=discord.Color.green()
                                 )
                                 await broadcast_message(content=None, embed=embed)
@@ -137,14 +133,13 @@ async def check_wuwa_updates():
             print(f"Error checking feeds: {e}")
 
 async def broadcast_message(content=None, embed=None):
-    """Posts messages to all registered channels initialized via /start."""
     for channel_id in list(active_channels):
         channel = bot.get_channel(channel_id)
         if channel:
             try:
                 await channel.send(content=content, embed=embed)
             except Exception as e:
-                print(f"Could not send to channel {channel_id}: {e}")
+                print(f"Failed to post in channel {channel_id}: {e}")
 
 if __name__ == "__main__":
     if not TOKEN:
