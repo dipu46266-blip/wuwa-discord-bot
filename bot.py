@@ -20,66 +20,89 @@ class WuWaBot(commands.Bot):
 
 bot = WuWaBot()
 
-# Initialize Gemini Client asynchronously if API key exists
+# Initialize Gemini Client cleanly
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 wuwa_group = app_commands.Group(name="wuwa", description="Wuthering Waves tracking commands")
 
 def extract_image_url(text: str) -> str | None:
-    """Helper to extract a direct image URL from text if present."""
     match = re.search(r'https?://\S+\.(?:png|jpg|jpeg|webp|gif)', text, re.IGNORECASE)
     return match.group(0) if match else None
 
 
-@wuwa_group.command(name="codes", description="View active redemption codes.")
-async def wuwa_codes(interaction: discord.Interaction):
-    await interaction.response.defer(thinking=True)
-
+async def fetch_gemini_content(prompt: str) -> tuple[str, str | None]:
+    """
+    Attempts to fetch content with Google Search grounding.
+    Falls back to standard generation if search grounding fails.
+    """
     if not ai_client:
-        await interaction.followup.send("❌ `GEMINI_API_KEY` is missing in Railway Environment Variables.")
-        return
+        return "❌ `GEMINI_API_KEY` is missing in environment variables.", None
 
+    # Step 1: Attempt Search Grounding with proper types syntax
     try:
-        prompt = (
-            "Perform a Google search for current active Wuthering Waves redemption codes. "
-            "Provide a clean list formatted in Markdown:\n"
-            "• **Code** — Rewards\n\n"
-            "Separate them into 'Active Codes' and 'Permanent Codes'. Keep it concise."
-        )
-
-        # Use async Gemini client (.aio) to keep Discord responsive
+        search_tool = types.Tool(google_search=types.GoogleSearch())
+        config = types.GenerateContentConfig(tools=[search_tool])
+        
         response = await ai_client.aio.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[{"google_search": {}}]
-            )
+            config=config
         )
-
-        ai_text = response.text or "No active codes found."
-
-        embed = discord.Embed(
-            title="🎁 Wuthering Waves - Active Codes",
-            description=ai_text[:3900],
-            color=discord.Color.gold()
-        )
-
-        # Extract source link if available in grounding metadata
+        
+        source_url = None
         if hasattr(response, 'candidates') and response.candidates:
             grounding = getattr(response.candidates[0], 'grounding_metadata', None)
             if grounding and getattr(grounding, 'grounding_chunks', None):
                 for chunk in grounding.grounding_chunks:
                     web_info = getattr(chunk, 'web', None)
                     if web_info and getattr(web_info, 'uri', None):
-                        embed.add_field(name="🔗 Source", value=web_info.uri, inline=False)
+                        source_url = web_info.uri
                         break
+
+        return response.text or "No information found.", source_url
+
+    except Exception as search_error:
+        print(f"Search grounding failed ({search_error}). Falling back to standard generation...")
+
+    # Step 2: Fallback to standard model call without Search Grounding
+    try:
+        response = await ai_client.aio.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
+        return response.text or "No information found.", None
+    except Exception as general_error:
+        print(f"General Gemini call failed: {general_error}")
+        raise general_error
+
+
+@wuwa_group.command(name="codes", description="View active redemption codes.")
+async def wuwa_codes(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+
+    try:
+        prompt = (
+            "List current active Wuthering Waves redemption codes. "
+            "Format cleanly with bullet points:\n"
+            "• **Code** — Rewards\n\n"
+            "Separate into 'Active Codes' and 'Permanent Codes'."
+        )
+
+        ai_text, source_url = await fetch_gemini_content(prompt)
+
+        embed = discord.Embed(
+            title="🎁 Wuthering Waves - Active Codes",
+            description=ai_text[:3900],
+            color=discord.Color.gold()
+        )
+        if source_url:
+            embed.add_field(name="🔗 Source", value=source_url, inline=False)
 
         embed.set_footer(text="Redeem in-game: Settings -> Other Settings -> Redemption Code")
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
-        print(f"Error fetching codes with AI: {e}")
-        await interaction.followup.send("❌ Failed to query AI search for active codes.")
+        await interaction.followup.send(f"❌ Error fetching codes: `{e}`")
 
 
 @wuwa_group.command(name="info", description="Get latest patch details or game news via AI.")
@@ -90,38 +113,23 @@ async def wuwa_codes(interaction: discord.Interaction):
 async def wuwa_info(interaction: discord.Interaction, option: app_commands.Choice[str]):
     await interaction.response.defer(thinking=True)
 
-    if not ai_client:
-        await interaction.followup.send("❌ `GEMINI_API_KEY` is missing in Railway Environment Variables.")
-        return
-
     try:
         if option.value == "recently":
             prompt = (
-                "Search Google for the latest official Wuthering Waves version update and patch details. "
-                "Structure your response with clear sections:\n"
+                "Provide details for the latest Wuthering Waves version patch notes. "
+                "Structure clearly:\n"
                 "**Version**: [Version Number & Title]\n"
-                "**New Resonators**: [List new 5-star and 4-star characters/banners]\n"
-                "**Patch Highlights**: [3-4 major bullet points about story, events, or regions]\n"
-                "**Banner Image**: [Provide a direct URL to a official banner image if available]"
+                "**New Resonators**: [List new 5-star and 4-star characters]\n"
+                "**Patch Highlights**: [3-4 major highlights]\n"
+                "**Banner Image**: [Include official banner image URL if available]"
             )
         else:
             prompt = (
-                "Search Google for any Wuthering Waves news, maintenance alerts, hotfixes, or announcements posted today. "
-                "Summarize key updates cleanly in bullet points."
+                "Provide recent news, maintenance details, or announcements for Wuthering Waves today. "
+                "Summarize cleanly."
             )
 
-        # Async request prevents blocking Discord's event loop
-        response = await ai_client.aio.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[{"google_search": {}}]
-            )
-        )
-
-        ai_text = response.text or "No information found."
-
-        # Extract image if Gemini included an image link
+        ai_text, source_url = await fetch_gemini_content(prompt)
         img_url = extract_image_url(ai_text)
 
         embed = discord.Embed(
@@ -133,22 +141,14 @@ async def wuwa_info(interaction: discord.Interaction, option: app_commands.Choic
         if img_url:
             embed.set_image(url=img_url)
 
-        # Append source grounding URL if retrieved
-        if hasattr(response, 'candidates') and response.candidates:
-            grounding = getattr(response.candidates[0], 'grounding_metadata', None)
-            if grounding and getattr(grounding, 'grounding_chunks', None):
-                for chunk in grounding.grounding_chunks:
-                    web_info = getattr(chunk, 'web', None)
-                    if web_info and getattr(web_info, 'uri', None):
-                        embed.add_field(name="🌐 Official Source", value=web_info.uri, inline=False)
-                        break
+        if source_url:
+            embed.add_field(name="🌐 Official Source", value=source_url, inline=False)
 
-        embed.set_footer(text="Powered by Gemini Search Grounding")
+        embed.set_footer(text="Powered by Gemini AI")
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
-        print(f"Error executing /wuwa info via AI: {e}")
-        await interaction.followup.send("❌ Failed to pull updates from AI search.")
+        await interaction.followup.send(f"❌ Failed to pull updates: `{e}`")
 
 bot.tree.add_command(wuwa_group)
 
