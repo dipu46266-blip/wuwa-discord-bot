@@ -3,7 +3,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import aiohttp
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -23,10 +22,31 @@ bot = WuWaBot()
 active_channels = set()
 posted_announcements = set()
 
-# Headers to mimic a browser so RSSHub/Cloudflare doesn't block requests
+# Browser headers to prevent Cloudflare / CDN blocking
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://wutheringwaves.kurogames.com/"
 }
+
+# Kuro Games Direct Announcement API Endpoint
+API_URL = "https://wutheringwaves.kurogames.com/p/api/news/getNewsList?type=0&page=1&pageSize=10"
+
+# --- HELPER FUNCTION TO FETCH DATA SAFELY ---
+async def fetch_wuwa_news():
+    timeout = aiohttp.ClientTimeout(total=5) # 5-second hard timeout
+    async with aiohttp.ClientSession(headers=HEADERS, timeout=timeout) as session:
+        try:
+            async with session.get(API_URL) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    # Verify successful response from Kuro Games API
+                    if data.get("code") == 0 or "data" in data:
+                        return data.get("data", {}).get("list", [])
+        except Exception as e:
+            print(f"[API Error] Failed to reach Kuro Games API: {e}")
+    return None
+
 
 # --- COMMAND GROUP SETUP (/wuwa <subcommand>) ---
 wuwa_group = app_commands.Group(name="wuwa", description="Wuthering Waves tracking commands")
@@ -77,48 +97,29 @@ async def wuwa_codes(interaction: discord.Interaction):
     app_commands.Choice(name="today (Today's Official Drops)", value="today")
 ])
 async def wuwa_info(interaction: discord.Interaction, option: app_commands.Choice[str]):
+    # Defer response immediately to prevent "Interaction Failed"
     await interaction.response.defer()
-    
-    # Updated RSS endpoints fallback
-    urls = [
-        "https://rsshub.app/wutheringwaves/news",
-        "https://rsshub.rssforever.com/wutheringwaves/news"
-    ]
 
-    text = None
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
-        for url in urls:
-            try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                    if resp.status == 200:
-                        text = await resp.text()
-                        if "<rss" in text or "<xml" in text:
-                            break
-            except Exception as req_err:
-                print(f"Failed to fetch from {url}: {req_err}")
+    news_items = await fetch_wuwa_news()
 
-    if not text:
-        await interaction.followup.send("❌ Unable to connect to Kuro Games RSS feed right now. Please try again later.")
+    if not news_items:
+        await interaction.followup.send("❌ Unable to fetch updates from Kuro Games servers right now. Please try again in a moment.")
         return
 
     try:
-        root = ET.fromstring(text)
-
         if option.value == "recently":
             latest_update = None
-            for item in root.findall("./channel/item"):
-                title_elem = item.find("title")
-                if title_elem is not None and title_elem.text:
-                    lower_title = title_elem.text.lower()
-                    if any(k in lower_title for k in ["version", "update", "patch", "preview"]):
-                        latest_update = item
-                        break
+            for item in news_items:
+                title = item.get("title", "").lower()
+                if any(k in title for k in ["version", "update", "patch", "preview", "notes"]):
+                    latest_update = item
+                    break
             
-            if latest_update is not None:
-                title = latest_update.find("title").text if latest_update.find("title") is not None else "Patch Notes"
-                link = latest_update.find("link").text if latest_update.find("link") is not None else "https://wutheringwaves.kurogames.com/"
-                desc_elem = latest_update.find("description")
-                desc = desc_elem.text if desc_elem is not None and desc_elem.text else ""
+            if latest_update:
+                title = latest_update.get("title", "Official Announcement")
+                news_id = latest_update.get("articleId", "")
+                link = f"https://wutheringwaves.kurogames.com/en/main/news/detail/{news_id}" if news_id else "https://wutheringwaves.kurogames.com/"
+                snippet = latest_update.get("summary", "") or "Check the official news post for full details."
 
                 embed = discord.Embed(
                     title=f"📢 {title}",
@@ -126,33 +127,40 @@ async def wuwa_info(interaction: discord.Interaction, option: app_commands.Choic
                     color=discord.Color.purple()
                 )
                 embed.add_field(name="🌐 Official Announcement Link", value=link, inline=False)
+                embed.add_field(name="📝 Details Snippet", value=snippet[:300] + ("..." if len(snippet) > 300 else ""), inline=False)
+                embed.set_footer(text="Kuro Games Direct API Tracker")
                 
-                snippet = desc[:300] + "..." if len(desc) > 300 else desc
-                if snippet:
-                    embed.add_field(name="📝 Patch Details Snippet", value=snippet, inline=False)
-
-                embed.set_footer(text="Auto-updated from Kuro Games official feed")
                 await interaction.followup.send(embed=embed)
             else:
-                await interaction.followup.send("⚠️ Could not find recent patch notes in the official feed.")
+                # If no specific "patch" tag found, output the most recent general announcement
+                top_item = news_items[0]
+                title = top_item.get("title", "Latest News")
+                news_id = top_item.get("articleId", "")
+                link = f"https://wutheringwaves.kurogames.com/en/main/news/detail/{news_id}"
+                
+                embed = discord.Embed(
+                    title=f"📢 Latest Update: {title}",
+                    url=link,
+                    color=discord.Color.purple()
+                )
+                embed.add_field(name="🌐 Link", value=link, inline=False)
+                await interaction.followup.send(embed=embed)
 
         elif option.value == "today":
             today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             found_today = False
 
-            for item in root.findall("./channel/item"):
-                pub_date = item.find("pubDate")
-                title_elem = item.find("title")
-                link_elem = item.find("link")
-
-                title = title_elem.text if title_elem is not None else "Official Update"
-                link = link_elem.text if link_elem is not None else ""
-
-                if pub_date is not None and pub_date.text and today_str in pub_date.text:
+            for item in news_items:
+                create_time = item.get("createTime", "") # Format: YYYY-MM-DD HH:MM:SS
+                if today_str in create_time:
                     found_today = True
+                    title = item.get("title", "Official Update")
+                    news_id = item.get("articleId", "")
+                    link = f"https://wutheringwaves.kurogames.com/en/main/news/detail/{news_id}"
+
                     embed = discord.Embed(
                         title=f"📰 Today's Official Announcement: {title}",
-                        url=link if link else None,
+                        url=link,
                         color=discord.Color.blue()
                     )
                     await interaction.followup.send(embed=embed)
@@ -161,12 +169,9 @@ async def wuwa_info(interaction: discord.Interaction, option: app_commands.Choic
             if not found_today:
                 await interaction.followup.send("ℹ️ No official updates or announcements posted today yet.")
 
-    except ET.ParseError:
-        print("XML Parsing Error: Received non-XML content from RSS feed.")
-        await interaction.followup.send("❌ Received invalid feed data from news provider.")
     except Exception as e:
         print(f"Error executing /wuwa info: {e}")
-        await interaction.followup.send("❌ Error processing feed data.")
+        await interaction.followup.send("❌ An unexpected error occurred while processing the news data.")
 
 # Register command group to bot tree
 bot.tree.add_command(wuwa_group)
@@ -188,66 +193,47 @@ async def check_wuwa_news():
     if not active_channels:
         return
 
-    urls = [
-        "https://rsshub.app/wutheringwaves/news",
-        "https://rsshub.rssforever.com/wutheringwaves/news"
-    ]
-
-    text = None
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
-        for url in urls:
-            try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                    if resp.status == 200:
-                        text = await resp.text()
-                        if "<rss" in text or "<xml" in text:
-                            break
-            except Exception:
-                continue
-
-    if not text:
+    news_items = await fetch_wuwa_news()
+    if not news_items:
         return
 
-    try:
-        root = ET.fromstring(text)
-        for item in reversed(root.findall("./channel/item")):
-            title_elem = item.find("title")
-            link_elem = item.find("link")
+    for item in reversed(news_items):
+        news_id = str(item.get("articleId", ""))
+        title = item.get("title", "Wuthering Waves Announcement")
+        link = f"https://wutheringwaves.kurogames.com/en/main/news/detail/{news_id}" if news_id else ""
 
-            title = title_elem.text if title_elem is not None else "Wuthering Waves Update"
-            link = link_elem.text if link_elem is not None else ""
+        if news_id and news_id not in posted_announcements:
+            posted_announcements.add(news_id)
+            lower_title = title.lower()
 
-            if link and link not in posted_announcements:
-                posted_announcements.add(link)
-                lower_title = title.lower()
+            # 1. Redemption Codes
+            if any(k in lower_title for k in ["code", "redemption", "reward", "gift"]):
+                msg = (
+                    f"# 🚨 NEW REDEMPTION CODE DROPPED 🚨\n"
+                    f"### ➡️ Link: {link}\n"
+                    f"**Details:** {title}\n"
+                    f"*Redeem in-game immediately before expiration!*"
+                )
+                await broadcast_message(content=msg)
 
-                if any(k in lower_title for k in ["code", "redemption", "reward", "gift"]):
-                    msg = (
-                        f"# 🚨 NEW REDEMPTION CODE DROPPED 🚨\n"
-                        f"### ➡️ Link: {link}\n"
-                        f"**Details:** {title}\n"
-                        f"*Redeem in-game immediately before expiration!*"
-                    )
-                    await broadcast_message(content=msg)
+            # 2. Version Updates
+            elif any(k in lower_title for k in ["version", "update", "patch", "preview"]):
+                embed = discord.Embed(
+                    title=f"📢 OFFICIAL UPDATE: {title}",
+                    url=link,
+                    color=discord.Color.purple()
+                )
+                embed.add_field(name="🌐 Official Link", value=link, inline=False)
+                await broadcast_message(embed=embed)
 
-                elif any(k in lower_title for k in ["version", "update", "patch", "preview"]):
-                    embed = discord.Embed(
-                        title=f"📢 OFFICIAL UPDATE: {title}",
-                        url=link,
-                        color=discord.Color.purple()
-                    )
-                    embed.add_field(name="🌐 Official Link", value=link, inline=False)
-                    await broadcast_message(embed=embed)
-
-                elif any(k in lower_title for k in ["maintenance", "compensation", "bug"]):
-                    embed = discord.Embed(
-                        title="🔧 MAINTENANCE & COMPENSATIONS",
-                        description=f"**{title}**\n\nOfficial Link: {link}",
-                        color=discord.Color.green()
-                    )
-                    await broadcast_message(embed=embed)
-    except Exception as e:
-        print(f"Error polling news feed: {e}")
+            # 3. Maintenance & Compensation
+            elif any(k in lower_title for k in ["maintenance", "compensation", "bug"]):
+                embed = discord.Embed(
+                    title="🔧 MAINTENANCE & COMPENSATIONS",
+                    description=f"**{title}**\n\nOfficial Link: {link}",
+                    color=discord.Color.green()
+                )
+                await broadcast_message(embed=embed)
 
 async def broadcast_message(content=None, embed=None):
     for channel_id in list(active_channels):
