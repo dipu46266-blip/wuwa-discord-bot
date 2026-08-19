@@ -1,2 +1,3 @@
 discord.py
 aiohttp
+pip install google-genai
