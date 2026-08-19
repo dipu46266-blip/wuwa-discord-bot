@@ -1,3 +1,4 @@
 discord.py
 aiohttp
 google-genai
+pip install --upgrade google-genai
