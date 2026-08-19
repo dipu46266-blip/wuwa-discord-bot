@@ -1,4 +1,5 @@
 import os
+import re
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -19,12 +20,16 @@ class WuWaBot(commands.Bot):
 
 bot = WuWaBot()
 
-# Initialize Gemini Client
-ai_client = None
-if GEMINI_API_KEY:
-    ai_client = genai.Client(api_key=GEMINI_API_KEY)
+# Initialize Gemini Client asynchronously if API key exists
+ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 wuwa_group = app_commands.Group(name="wuwa", description="Wuthering Waves tracking commands")
+
+def extract_image_url(text: str) -> str | None:
+    """Helper to extract a direct image URL from text if present."""
+    match = re.search(r'https?://\S+\.(?:png|jpg|jpeg|webp|gif)', text, re.IGNORECASE)
+    return match.group(0) if match else None
+
 
 @wuwa_group.command(name="codes", description="View active redemption codes.")
 async def wuwa_codes(interaction: discord.Interaction):
@@ -36,24 +41,40 @@ async def wuwa_codes(interaction: discord.Interaction):
 
     try:
         prompt = (
-            "List all currently active Wuthering Waves redemption codes (including permanent codes and recent livestream codes). "
-            "For each code, state what rewards it gives. Keep the response concise, clear, and easy to read."
+            "Perform a Google search for current active Wuthering Waves redemption codes. "
+            "Provide a clean list formatted in Markdown:\n"
+            "• **Code** — Rewards\n\n"
+            "Separate them into 'Active Codes' and 'Permanent Codes'. Keep it concise."
         )
-        
-        response = ai_client.models.generate_content(
+
+        # Use async Gemini client (.aio) to keep Discord responsive
+        response = await ai_client.aio.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())]
+                tools=[{"google_search": {}}]
             )
         )
 
+        ai_text = response.text or "No active codes found."
+
         embed = discord.Embed(
-            title="🎁 Wuthering Waves - Active Codes (AI Search)",
-            description=response.text[:3900],
+            title="🎁 Wuthering Waves - Active Codes",
+            description=ai_text[:3900],
             color=discord.Color.gold()
         )
-        embed.set_footer(text="Powered by Gemini AI Search")
+
+        # Extract source link if available in grounding metadata
+        if hasattr(response, 'candidates') and response.candidates:
+            grounding = getattr(response.candidates[0], 'grounding_metadata', None)
+            if grounding and getattr(grounding, 'grounding_chunks', None):
+                for chunk in grounding.grounding_chunks:
+                    web_info = getattr(chunk, 'web', None)
+                    if web_info and getattr(web_info, 'uri', None):
+                        embed.add_field(name="🔗 Source", value=web_info.uri, inline=False)
+                        break
+
+        embed.set_footer(text="Redeem in-game: Settings -> Other Settings -> Redemption Code")
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
@@ -67,7 +88,6 @@ async def wuwa_codes(interaction: discord.Interaction):
     app_commands.Choice(name="today (Today's News)", value="today")
 ])
 async def wuwa_info(interaction: discord.Interaction, option: app_commands.Choice[str]):
-    # Defer immediately to prevent Discord's 3-second timeout
     await interaction.response.defer(thinking=True)
 
     if not ai_client:
@@ -77,46 +97,53 @@ async def wuwa_info(interaction: discord.Interaction, option: app_commands.Choic
     try:
         if option.value == "recently":
             prompt = (
-                "Search for the latest Wuthering Waves version patch notes and updates. "
-                "Provide a clean summary including:\n"
-                "1. Current Version Number and Title\n"
-                "2. New Characters / Resonators\n"
-                "3. Key Features, Events & Story Updates\n"
-                "4. A direct image link or banner image URL if available."
+                "Search Google for the latest official Wuthering Waves version update and patch details. "
+                "Structure your response with clear sections:\n"
+                "**Version**: [Version Number & Title]\n"
+                "**New Resonators**: [List new 5-star and 4-star characters/banners]\n"
+                "**Patch Highlights**: [3-4 major bullet points about story, events, or regions]\n"
+                "**Banner Image**: [Provide a direct URL to a official banner image if available]"
             )
         else:
             prompt = (
-                "Search for any news, announcements, maintenance alerts, or hotfixes posted for Wuthering Waves today. "
-                "Summarize key details briefly."
+                "Search Google for any Wuthering Waves news, maintenance alerts, hotfixes, or announcements posted today. "
+                "Summarize key updates cleanly in bullet points."
             )
 
-        response = ai_client.models.generate_content(
+        # Async request prevents blocking Discord's event loop
+        response = await ai_client.aio.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())]
+                tools=[{"google_search": {}}]
             )
         )
 
         ai_text = response.text or "No information found."
 
+        # Extract image if Gemini included an image link
+        img_url = extract_image_url(ai_text)
+
         embed = discord.Embed(
-            title=f"📢 Wuthering Waves Info ({option.value.capitalize()})",
+            title=f"📢 Wuthering Waves Update ({option.value.capitalize()})",
             description=ai_text[:3900],
             color=discord.Color.purple()
         )
-        
-        # Check if Google Search metadata returned an image or source link
+
+        if img_url:
+            embed.set_image(url=img_url)
+
+        # Append source grounding URL if retrieved
         if hasattr(response, 'candidates') and response.candidates:
             grounding = getattr(response.candidates[0], 'grounding_metadata', None)
             if grounding and getattr(grounding, 'grounding_chunks', None):
                 for chunk in grounding.grounding_chunks:
                     web_info = getattr(chunk, 'web', None)
                     if web_info and getattr(web_info, 'uri', None):
-                        embed.add_field(name="🔗 Source", value=web_info.uri, inline=False)
+                        embed.add_field(name="🌐 Official Source", value=web_info.uri, inline=False)
                         break
 
-        embed.set_footer(text="Fetched dynamically via Gemini Search")
+        embed.set_footer(text="Powered by Gemini Search Grounding")
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
