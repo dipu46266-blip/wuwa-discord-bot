@@ -5,7 +5,6 @@ from discord.ext import commands
 from google import genai
 from google.genai import types
 
-# Load Environment Variables from Railway
 TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -19,28 +18,31 @@ class WuWaBot(commands.Bot):
         print("Slash commands synced successfully.")
 
 bot = WuWaBot()
-
-# Initialize Gemini Client cleanly
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 wuwa_group = app_commands.Group(name="wuwa", description="Wuthering Waves tracking commands")
 
 
-async def ask_gemini(prompt: str) -> str:
-    """Helper function to fetch structured text safely using Gemini 2.5 Flash."""
+async def ask_gemini_with_search(prompt: str) -> str:
+    """Queries Gemini 2.5 Flash with live Google Search grounding enabled."""
     if not ai_client:
         return "❌ `GEMINI_API_KEY` is missing in Railway Environment Variables."
 
     try:
-        # Standard fast generation call
+        # Enables live Google Search browsing
+        config = types.GenerateContentConfig(
+            tools=[{"type": "google_search"}]
+        )
+
         response = await ai_client.aio.models.generate_content(
             model="gemini-2.5-flash",
-            contents=prompt
+            contents=prompt,
+            config=config
         )
-        return response.text or "No data returned."
+        return response.text or "No data retrieved from web search."
     except Exception as e:
-        print(f"[Gemini Error]: {e}")
-        return f"❌ AI Service Error: `{e}`"
+        print(f"[Gemini Search Error]: {e}")
+        return f"❌ Search Error: `{e}`"
 
 
 @wuwa_group.command(name="codes", description="View active redemption codes.")
@@ -48,13 +50,13 @@ async def wuwa_codes(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
 
     prompt = (
-        "List all currently active Wuthering Waves redemption codes. "
+        "Search the web for all currently active Wuthering Waves redemption codes today. "
         "Format cleanly in Markdown:\n"
         "• **Code** — Rewards\n\n"
-        "Categorize into 'Active Codes' and 'Permanent Codes'."
+        "Categorize into 'Active Codes' and 'Permanent Codes'. Exclude expired livestream codes."
     )
 
-    ai_response = await ask_gemini(prompt)
+    ai_response = await ask_gemini_with_search(prompt)
 
     embed = discord.Embed(
         title="🎁 Wuthering Waves - Active Codes",
@@ -75,26 +77,25 @@ async def wuwa_info(interaction: discord.Interaction, option: app_commands.Choic
 
     if option.value == "recently":
         prompt = (
-            "Summarize the latest version update and patch details for Wuthering Waves. "
-            "Structure cleanly using bold section titles:\n"
+            "Search Google for the latest official version patch notes for Wuthering Waves. "
+            "Structure cleanly:\n"
             "**Version Details**: [Version Number & Title]\n"
-            "**New Resonators**: [List featured characters]\n"
+            "**New Resonators**: [List featured banner characters]\n"
             "**Key Highlights**: [Major events, story drops, or new areas]"
         )
     else:
         prompt = (
-            "Summarize any official news, maintenance announcements, or event drops "
-            "for Wuthering Waves today."
+            "Search Google for official Wuthering Waves news, maintenance announcements, or event drops posted today."
         )
 
-    ai_response = await ask_gemini(prompt)
+    ai_response = await ask_gemini_with_search(prompt)
 
     embed = discord.Embed(
         title=f"📢 Wuthering Waves Overview ({option.value.capitalize()})",
         description=ai_response[:3900],
         color=discord.Color.purple()
     )
-    embed.set_footer(text="Powered by Gemini AI")
+    embed.set_footer(text="Powered by Gemini Search Grounding")
     await interaction.followup.send(embed=embed)
 
 
