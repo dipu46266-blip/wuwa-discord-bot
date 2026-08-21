@@ -96,6 +96,7 @@ async def wuwa_events(interaction: discord.Interaction):
 
     strict_prompt = (
         "Search live web for top active events in Wuthering Waves. "
+        "Write under 2000 words"
         "Keep descriptions under 15 words each. Return ONLY raw JSON with NO markdown blocks:\n"
         "{\n"
         '  "events": [\n'
