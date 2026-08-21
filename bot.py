@@ -55,7 +55,7 @@ async def wuwa_events(interaction: discord.Interaction):
         "RULES:\n"
         "1. Include ONLY playable in-game events (combat challenges, double drops, login events).\n"
         "2. EXCLUDE all banners, character convening, weapon pulls, or external web events.\n"
-        "3. Keep total length strictly under 1500 CHARACTERS.\n"
+        "3. Keep total length strictly under 1900 CHARACTERS.\n"
         "4. Return PLAIN TEXT formatted in Discord markdown directly like this:\n\n"
         "📢 **Wuthering Waves — Active In-Game Events**\n\n"
         "🎯 **[Event Name]**\n"
