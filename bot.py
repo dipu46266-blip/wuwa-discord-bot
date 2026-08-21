@@ -1,4 +1,5 @@
 import os
+import datetime
 import aiohttp
 import discord
 from discord import app_commands
@@ -56,7 +57,7 @@ async def wuwa_start(interaction: discord.Interaction):
         enabled_channels.add(channel_id)
         embed = discord.Embed(
             title="✅ Automatic Updates Enabled",
-            description=f"This channel will now automatically receive new Wuthering Waves codes, events, and patch details.",
+            description="This channel will now automatically receive new Wuthering Waves codes, events, and patch details.",
             color=discord.Color.green()
         )
         await interaction.response.send_message(embed=embed)
@@ -94,17 +95,19 @@ async def admin_command_error(interaction: discord.Interaction, error: app_comma
 async def wuwa_events(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
 
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%B %d, %Y")
+
     strict_prompt = (
-        "Search live web for top active events in Wuthering Waves. "
-        "Write under 2000 words"
-        "Keep descriptions under 15 words each. Return ONLY raw JSON with NO markdown blocks:\n"
+        f"Today is {today}. Search live web for top active events in Wuthering Waves right now. "
+        "Limit response to maximum 5 active events. Keep each field under 10 words. "
+        "Total raw output MUST be under 1200 CHARACTERS. Return ONLY raw JSON with NO markdown blocks:\n"
         "{\n"
         '  "events": [\n'
         '    {\n'
         '      "name": "Event Title",\n'
-        '      "rewards": "Rewards Summary",\n'
+        '      "rewards": "Short Rewards",\n'
         '      "how_to_do": "Short 1-sentence step",\n'
-        '      "requirements": "What needed to do it or to participate in it",\n'
+        '      "requirements": "Short Level/Quest req",\n'
         '      "dates": "Start — Expire Date"\n'
         "    }\n"
         "  ]\n"
@@ -118,17 +121,19 @@ async def wuwa_events(interaction: discord.Interaction):
 async def wuwa_outside(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
 
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%B %d, %Y")
+
     strict_prompt = (
-        "Search live web for active Wuthering Waves external events outside the game "
-        "(e.g., Discord Sign-in, Discord Stream Quests, Twitch Drops, Official Web Events). "
-        "Return ONLY a clean JSON object. Format:\n"
+        f"Today is {today}. Search live web for active Wuthering Waves external events outside the game "
+        "(Discord Sign-in, Discord Quests, Twitch Drops, Web Events). Limit response to top 4 events. "
+        "Total response MUST be under 1200 CHARACTERS. Return ONLY raw JSON with NO markdown blocks:\n"
         "{\n"
         '  "external_rewards": [\n'
         '    {\n'
         '      "platform": "Discord / Twitch / Web",\n'
         '      "event_name": "Title",\n'
-        '      "rewards": "Astrite / Item Count",\n'
-        '      "how_to_claim": "Simple step-by-step instruction",\n'
+        '      "rewards": "Short Rewards",\n'
+        '      "how_to_claim": "Short step",\n'
         '      "expiry": "Expiration Date"\n'
         "    }\n"
         "  ]\n"
@@ -142,10 +147,11 @@ async def wuwa_outside(interaction: discord.Interaction):
 async def wuwa_codes(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
 
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%B %d, %Y")
+
     strict_prompt = (
-        "List ONLY currently active or new Wuthering Waves codes. "
-        "Do NOT include expired codes, permanent codes, tables, or redemption guides. "
-        "Format strictly like this:\n"
+        f"Today is {today}. List ONLY currently active or new Wuthering Waves redemption codes. "
+        "Do NOT include expired codes, permanent codes, or guides. Keep under 500 characters total:\n"
         "Active Codes:\n"
         "• `CODE` — Rewards"
     )
@@ -161,9 +167,12 @@ async def wuwa_codes(interaction: discord.Interaction):
 async def wuwa_info(interaction: discord.Interaction, option: app_commands.Choice[str]):
     await interaction.response.defer(thinking=True)
 
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%B %d, %Y")
+
     if option.value == "recently":
         strict_prompt = (
-            "Search for latest Wuthering Waves version details and return strictly JSON:\n"
+            f"Today is {today}. Search for current Wuthering Waves version details. "
+            "Keep output under 1200 characters total. Return ONLY raw JSON with NO markdown blocks:\n"
             "{\n"
             '  "patch_version": "Version Number & Title",\n'
             '  "phase_1": {\n'
@@ -177,7 +186,7 @@ async def wuwa_info(interaction: discord.Interaction, option: app_commands.Choic
             "}"
         )
     else:
-        strict_prompt = "List ONLY official Wuthering Waves news released today in under 3 bullet points."
+        strict_prompt = f"Today is {today}. List ONLY official Wuthering Waves news released today in under 3 concise bullet points."
 
     await send_to_activepieces(strict_prompt, interaction.followup.url)
 
