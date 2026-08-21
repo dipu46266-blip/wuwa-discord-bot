@@ -98,24 +98,28 @@ async def wuwa_events(interaction: discord.Interaction):
     today = datetime.datetime.now(datetime.timezone.utc).strftime("%B %d, %Y")
 
     strict_prompt = (
-        f"Today is {today}. Search live web for top active events in Wuthering Waves right now. "
-        "Limit response to maximum 5 active events. Keep each field under 10 words. "
-        "Total raw output MUST be under 1200 CHARACTERS. Return ONLY raw JSON with NO markdown blocks:\n"
+        f"Today is {today}. Search live web specifically for CURRENT Wuthering Waves Version 3.6 in-game LIMITED-TIME EVENTS.\n"
+        "RULES:\n"
+        "1. Include ONLY playable events (e.g., combat challenges, double drop events, login events, mini-games).\n"
+        "2. STRICTLY EXCLUDE gacha banners, character convening, weapon banners, featured pulls, or convene events.\n"
+        "3. DO NOT return events from old patches (e.g., Suisui, Jiyan, Yinlin, or past versions).\n"
+        "4. Limit response to top 4 active events MAX. Keep each description under 10 words.\n"
+        "5. The entire output MUST be under 1000 CHARACTERS total to fit Discord limits.\n\n"
+        "Return ONLY raw JSON with NO markdown code block wrappers:\n"
         "{\n"
         '  "events": [\n'
         '    {\n'
         '      "name": "Event Title",\n'
-        '      "rewards": "Short Rewards",\n'
+        '      "rewards": "Rewards Summary",\n'
         '      "how_to_do": "Short 1-sentence step",\n'
-        '      "requirements": "Short Level/Quest req",\n'
-        '      "dates": "Start — Expire Date"\n'
+        '      "requirements": "Short Requirement",\n'
+        '      "dates": "Start Date — Expire Date"\n'
         "    }\n"
         "  ]\n"
         "}"
     )
 
     await send_to_activepieces(strict_prompt, interaction.followup.url)
-
 
 @wuwa_group.command(name="outside", description="Check for external rewards (Twitch Drops, Discord Check-ins, Web Events).")
 async def wuwa_outside(interaction: discord.Interaction):
