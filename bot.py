@@ -96,7 +96,7 @@ async def wuwa_events(interaction: discord.Interaction):
 
     strict_prompt = (
         "Search live web for active limited-time events in Wuthering Waves. "
-        "Return ONLY a clean JSON object containing active events. Format:\n"
+        "Return ONLY raw JSON with NO markdown code block wrappers or extra text. Format:\n"
         "{\n"
         '  "events": [\n'
         '    {\n'
