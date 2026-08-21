@@ -20,14 +20,11 @@ class WuWaBot(commands.Bot):
 bot = WuWaBot()
 wuwa_group = app_commands.Group(name="wuwa", description="Wuthering Waves tracking commands")
 
-# Tracks channels where automatic updates are active
 enabled_channels = set()
 
-
 async def send_to_activepieces(prompt: str, callback_url: str):
-    """Payloads execution prompt and Discord callback URL to Activepieces."""
     if not ACTIVEPIECES_WEBHOOK_URL:
-        print("[Error] ACTIVEPIECES_WEBHOOK_URL is missing in environment variables.")
+        print("[Error] ACTIVEPIECES_WEBHOOK_URL is missing!")
         return
 
     payload = {
@@ -44,50 +41,6 @@ async def send_to_activepieces(prompt: str, callback_url: str):
 
 
 # ==========================================
-# ADMIN CONTROLS (AUTO-NOTIFS)
-# ==========================================
-
-@wuwa_group.command(name="start", description="[Admin Only] Start automatic news updates in this channel.")
-@app_commands.checks.has_permissions(administrator=True)
-async def wuwa_start(interaction: discord.Interaction):
-    channel_id = interaction.channel_id
-    if channel_id in enabled_channels:
-        await interaction.response.send_message("⚠️ Automatic updates are already enabled in this channel.", ephemeral=True)
-    else:
-        enabled_channels.add(channel_id)
-        embed = discord.Embed(
-            title="✅ Automatic Updates Enabled",
-            description="This channel will now automatically receive new Wuthering Waves codes, events, and patch details.",
-            color=discord.Color.green()
-        )
-        await interaction.response.send_message(embed=embed)
-
-
-@wuwa_group.command(name="stop", description="[Admin Only] Stop automatic news updates in this channel.")
-@app_commands.checks.has_permissions(administrator=True)
-async def wuwa_stop(interaction: discord.Interaction):
-    channel_id = interaction.channel_id
-    if channel_id in enabled_channels:
-        enabled_channels.remove(channel_id)
-        embed = discord.Embed(
-            title="🛑 Automatic Updates Disabled",
-            description="Automatic updates have been disabled for this channel.",
-            color=discord.Color.red()
-        )
-        await interaction.response.send_message(embed=embed)
-    else:
-        await interaction.response.send_message("⚠️ Automatic updates are not active in this channel.", ephemeral=True)
-
-
-# Error Handler for Admin Permission Check
-@wuwa_start.error
-@wuwa_stop.error
-async def admin_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("❌ **Access Denied:** Only Server Administrators can run this command.", ephemeral=True)
-
-
-# ==========================================
 # GENERAL SLASH COMMANDS
 # ==========================================
 
@@ -98,28 +51,22 @@ async def wuwa_events(interaction: discord.Interaction):
     today = datetime.datetime.now(datetime.timezone.utc).strftime("%B %d, %Y")
 
     strict_prompt = (
-        f"Today is {today}. Search live web specifically for CURRENT Wuthering Waves Version 3.6 in-game LIMITED-TIME EVENTS.\n"
+        f"Today is {today}. Search live web specifically for CURRENT Wuthering Waves in-game LIMITED-TIME EVENTS.\n"
         "RULES:\n"
-        "1. Include ONLY playable events (e.g., combat challenges, double drop events, login events, mini-games).\n"
-        "2. STRICTLY EXCLUDE gacha banners, character convening, weapon banners, featured pulls, or convene events.\n"
-        "3. DO NOT return events from old patches (e.g., Suisui, Jiyan, Yinlin, or past versions).\n"
-        "4. Limit response to top 4 active events MAX. Keep each description under 10 words.\n"
-        "5. The entire output MUST be under 1000 CHARACTERS total to fit Discord limits.\n\n"
-        "Return ONLY raw JSON with NO markdown code block wrappers:\n"
-        "{\n"
-        '  "events": [\n'
-        '    {\n'
-        '      "name": "Event Title",\n'
-        '      "rewards": "Rewards Summary",\n'
-        '      "how_to_do": "Short 1-sentence step",\n'
-        '      "requirements": "Short Requirement",\n'
-        '      "dates": "Start Date — Expire Date"\n'
-        "    }\n"
-        "  ]\n"
-        "}"
+        "1. Include ONLY playable in-game events (combat challenges, double drops, login events).\n"
+        "2. EXCLUDE all banners, character convening, weapon pulls, or external web events.\n"
+        "3. Keep total length strictly under 1500 CHARACTERS.\n"
+        "4. Return PLAIN TEXT formatted in Discord markdown directly like this:\n\n"
+        "📢 **Wuthering Waves — Active In-Game Events**\n\n"
+        "🎯 **[Event Name]**\n"
+        "• **Rewards:** [Rewards]\n"
+        "• **How:** [Short 1-sentence step]\n"
+        "• **Req:** [Union Level / Quest req]\n"
+        "• **Dates:** [Start — End Date]\n"
     )
 
     await send_to_activepieces(strict_prompt, interaction.followup.url)
+
 
 @wuwa_group.command(name="outside", description="Check for external rewards (Twitch Drops, Discord Check-ins, Web Events).")
 async def wuwa_outside(interaction: discord.Interaction):
@@ -129,19 +76,13 @@ async def wuwa_outside(interaction: discord.Interaction):
 
     strict_prompt = (
         f"Today is {today}. Search live web for active Wuthering Waves external events outside the game "
-        "(Discord Sign-in, Discord Quests, Twitch Drops, Web Events). Limit response to top 4 events. "
-        "Total response MUST be under 1200 CHARACTERS. Return ONLY raw JSON with NO markdown blocks:\n"
-        "{\n"
-        '  "external_rewards": [\n'
-        '    {\n'
-        '      "platform": "Discord / Twitch / Web",\n'
-        '      "event_name": "Title",\n'
-        '      "rewards": "Short Rewards",\n'
-        '      "how_to_claim": "Short step",\n'
-        '      "expiry": "Expiration Date"\n'
-        "    }\n"
-        "  ]\n"
-        "}"
+        "(Discord Sign-in, Discord Quests, Twitch Drops, Web Events).\n"
+        "Keep total response under 1500 CHARACTERS. Return PLAIN TEXT formatted strictly like this:\n\n"
+        "🌐 **Wuthering Waves — External Rewards**\n\n"
+        "• **[Platform] Event Name**\n"
+        "  - **Rewards:** [Rewards]\n"
+        "  - **How to claim:** [Short step]\n"
+        "  - **Expires:** [Date]\n"
     )
 
     await send_to_activepieces(strict_prompt, interaction.followup.url)
@@ -155,9 +96,10 @@ async def wuwa_codes(interaction: discord.Interaction):
 
     strict_prompt = (
         f"Today is {today}. List ONLY currently active or new Wuthering Waves redemption codes. "
-        "Do NOT include expired codes, permanent codes, or guides. Keep under 500 characters total:\n"
-        "Active Codes:\n"
-        "• `CODE` — Rewards"
+        "Do NOT include expired codes or permanent codes. Keep total under 500 characters.\n"
+        "Return PLAIN TEXT formatted like this:\n\n"
+        "🎁 **Active Wuthering Waves Codes:**\n"
+        "• `CODE` — Rewards\n"
     )
 
     await send_to_activepieces(strict_prompt, interaction.followup.url)
@@ -175,33 +117,27 @@ async def wuwa_info(interaction: discord.Interaction, option: app_commands.Choic
 
     if option.value == "recently":
         strict_prompt = (
-            f"Today is {today}. Search for current Wuthering Waves version details. "
-            "Keep output under 1200 characters total. Return ONLY raw JSON with NO markdown blocks:\n"
-            "{\n"
-            '  "patch_version": "Version Number & Title",\n'
-            '  "phase_1": {\n'
-            '    "new_characters": [{"name": "", "element": "", "weapon": "", "role": "", "image_url": ""}],\n'
-            '    "reruns": [{"name": "", "rerun_count": "e.g., 2nd Rerun", "element": "", "role": ""}]\n'
-            "  },\n"
-            '  "phase_2": {\n'
-            '    "new_characters": [{"name": "", "element": "", "weapon": "", "role": "", "image_url": ""}],\n'
-            '    "reruns": [{"name": "", "rerun_count": "e.g., 1st Rerun", "element": "", "role": ""}]\n'
-            "  }\n"
-            "}"
+            f"Today is {today}. Search for current Wuthering Waves version patch details. "
+            "Keep response under 1900 CHARACTERS. Return PLAIN TEXT formatted strictly like this:\n\n"
+            "⚔️ **Wuthering Waves Patch Update**\n"
+            "**Version:** [Patch Number & Title]\n\n"
+            "**Phase 1 Banners:**\n"
+            "• [New Character/Rerun] — Element | Weapon\n\n"
+            "**Phase 2 Banners:**\n"
+            "• [New Character/Rerun] — Element | Weapon\n"
+            "**Limited Events(In normal details DOnt talk about it too much only what events name asterite count and requirement to it)**\n"
         )
     else:
-        strict_prompt = f"Today is {today}. List ONLY official Wuthering Waves news released today in under 3 concise bullet points."
+        strict_prompt = f"Today is {today}. List ONLY official Wuthering Waves news released today in under 3 concise bullet points as plain text."
 
     await send_to_activepieces(strict_prompt, interaction.followup.url)
 
 
 bot.tree.add_command(wuwa_group)
 
-
 @bot.event
 async def on_ready():
     print(f"Logged in successfully as {bot.user.name} ({bot.user.id})")
-
 
 if __name__ == "__main__":
     if not TOKEN:
